@@ -1,0 +1,67 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: petclinic
+      MYSQL_USER: petclinic
+      MYSQL_PASSWORD: petclinic
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  backend:
+    image: maven:3.9.9-eclipse-temurin-21
+    working_dir: /workspace/spring-petclinic-rest
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: mysql,spring-data-jpa
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/petclinic?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      SPRING_DATASOURCE_USERNAME: petclinic
+      SPRING_DATASOURCE_PASSWORD: petclinic
+    volumes:
+      - ./spring-petclinic-rest:/workspace/spring-petclinic-rest
+      - maven-repo:/root/.m2
+    expose:
+      - "9966"
+    command: ["sh", "-c", "chmod +x ./mvnw && ./mvnw spring-boot:run"]
+
+  web:
+    image: node:24-alpine
+    working_dir: /workspace
+    depends_on:
+      - backend
+    environment:
+      PORT: 10081
+      BACKEND_ORIGIN: http://backend:9966
+      PUBLIC_DIR: /tmp/petclinic-public
+    volumes:
+      - .:/workspace
+      - frontend-node_modules:/workspace/spring-petclinic-angular/node_modules
+    command:
+      - sh
+      - -c
+      - |
+        cd spring-petclinic-angular && \
+        npm ci && \
+        npm run build -- --configuration production && \
+        rm -rf /tmp/petclinic-public && \
+        mkdir -p /tmp/petclinic-public && \
+        if [ -d dist/browser ]; then cp -a dist/browser/. /tmp/petclinic-public/; else cp -a dist/. /tmp/petclinic-public/; fi && \
+        find /tmp/petclinic-public -type f \( -name '*.js' -o -name '*.html' \) -exec sed -i 's|http://localhost:9966/petclinic/api/|/petclinic/api/|g' {} + && \
+        cd /workspace && \
+        node petclinic-web-server.mjs
+    ports:
+      - "10081:10081"
+
+volumes:
+  frontend-node_modules:
+  mysql-data:
+  maven-repo:
